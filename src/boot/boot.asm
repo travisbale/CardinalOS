@@ -66,8 +66,12 @@ protected_mode:
     mov fs, ax
     mov gs, ax
     mov ss, ax
-    ; mov ebp, 0x00200000
-    ; mov esp, ebp
+
+    ; Enable the A20 line using the Fast A20 Gate
+    in al, 0x92
+    or al, 0x2
+    out 0x92, al
+
     jmp $
 
 ; Fill up to 510 bytes with 0s and add the boot flag to the end of the file
