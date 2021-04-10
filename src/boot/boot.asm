@@ -10,11 +10,11 @@ bios_parameter_block:
     ; The BIOS Parameter Block is loacted at the beginning of the boot sector
     ; and must be accounted for because Certain BIOSes may overrwrite the data
     ; in this section.
-    jmp short start
+    jmp short start_boot
     nop
     times 33 db 0
 
-start:
+start_boot:
     cli ; Disable interrupts
 
     ; Clear the important segment registers so offsets are correctly calculated
@@ -31,8 +31,8 @@ start:
     or eax, 0x1
     mov cr0, eax
 
-    ; Jump to 32 bit protected mode
-    jmp PROT_MODE_CODE_SEG:protected_mode
+    ; Jump to 32 bit protected mode to load the kernel
+    jmp PROT_MODE_CODE_SEG:load_kernel
 
 gdt:
 ; Taken from https://en.wikipedia.org/wiki/Global_Descriptor_Table#GDT_example
@@ -58,21 +58,69 @@ gdt_descriptor:
     dd gdt      ; Address of GDT
 
 BITS 32
-protected_mode:
-    ; Setup the protected mode segment registers
-    mov ax, PROT_MODE_DATA_SEG
-    mov ds, ax
-    mov es, ax
-    mov fs, ax
-    mov gs, ax
-    mov ss, ax
+load_kernel:
+    mov eax, 1          ; First sector to load
+    mov ecx, 100        ; Total sectors to load
+    mov edi, 0x0100000  ; Address to laod the sectors to
+    call ata_lba_read
 
-    ; Enable the A20 line using the Fast A20 Gate
-    in al, 0x92
-    or al, 0x2
-    out 0x92, al
+    ; Jump to kernel.asm which we just loaded at 0x0100000
+    jmp PROT_MODE_CODE_SEG:0x0100000
 
-    jmp $
+ata_lba_read:
+    mov ebx, eax ; Backup the LBA
+
+    ; Send the hightest 8 bits of the LBA to the hard disk controller
+    shr eax, 24
+    or eax, 0xE0 ; Select the master drive
+    mov dx, 0x1F6
+    out dx, al
+
+    ; Send the total sectors to read
+    mov eax, ecx
+    mov dx, 0x1F2
+    out dx, al
+
+    ; Send more bits of the LBA
+    mov eax, ebx ; Restore the backup LBA
+    mov dx, 0x1F3
+    out dx, al
+
+    ; Send more bits of the LBA
+    mov dx, 0x1F4
+    mov eax, ebx ; Restore the backup LBA
+    shr eax, 8
+    out dx, al
+
+    ; Send upper 16 bits of the LBA
+    mov dx, 0x1F5
+    mov eax, ebx ; Restore the backup LBA
+    shr eax, 16
+    out dx, al
+
+    mov dx, 0x1F7
+    mov al, 0x20
+    out dx, al
+
+.next_sector:
+    ; Read all sectors into memory
+    push ecx
+
+.try_again:
+    ; Check if we need to read
+    mov dx, 0x1F7
+    in al, dx
+    test al, 8
+    jz .try_again
+
+    ; We need to read 256 words at a time, which is 1 sector (512 bytes)
+    mov ecx, 256
+    mov dx, 0x1F0
+    rep insw
+    pop ecx
+    loop .next_sector
+
+    ret
 
 ; Fill up to 510 bytes with 0s and add the boot flag to the end of the file
 times 510 - ($ - $$) db 0

@@ -52,5 +52,6 @@ Mkfile.old
 dkms.conf
 
 # Binary files
+build/
 bin/
 *.bin
